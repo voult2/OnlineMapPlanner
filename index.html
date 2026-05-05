@@ -489,7 +489,9 @@ const flagColors     = { red: '#ff2200', blue: '#1e90ff', grey: '#909090' };
 const flagColorNames = { red: 'Vermelha', blue: 'Azul', grey: 'Cinzenta' };
 let   flagColor = 'red'; // currently selected flag colour
 function makeFlagSVG(hex) {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="30" viewBox="0 0 22 26" style="pointer-events:none"><rect x="2" y="1" width="3" height="24" fill="#ffffff" rx="1"/><polygon points="5,2 20,8 5,14" fill="${hex}"/><polygon points="5,2 20,8 5,14" fill="none" stroke="#ffffff" stroke-width="1.2"/></svg>`;
+  // Pole centered at x=11 (viewBox centre) so bottom-centre of the element
+  // lands exactly on the click/tap point — matching the outro pin behaviour.
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="30" viewBox="0 0 22 26" style="pointer-events:none"><rect x="9.5" y="0" width="3" height="26" fill="#ffffff" rx="1"/><polygon points="12.5,1 22,7 12.5,13" fill="${hex}"/><polygon points="12.5,1 22,7 12.5,13" fill="none" stroke="#ffffff" stroke-width="1.2"/></svg>`;
 }
 const outroColors     = { red: '#ff2200', blue: '#1e90ff', grey: '#909090' };
 const outroColorNames = { red: 'Vermelho', blue: 'Azul', grey: 'Cinzento' };

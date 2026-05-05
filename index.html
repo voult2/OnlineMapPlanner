@@ -8,7 +8,7 @@
   ║    Claude (Sonnet)  AI assistant by Anthropic                    ║
   ╚══════════════════════════════════════════════════════════════════╝
 -->
-<html lang="en">
+<html lang="pt">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
@@ -627,12 +627,12 @@ document.querySelectorAll('.mbtn').forEach(btn => {
 });
 
 // ─── Flag colour picker ───────────────────────────────
-document.querySelectorAll('.flag-color-btn').forEach(btn => {
+document.querySelectorAll('#flag-color-picker .flag-color-btn').forEach(btn => {
   btn.addEventListener('click', e => {
     e.stopPropagation();
     flagColor = btn.dataset.color;
-    // Update active ring on picker buttons
-    document.querySelectorAll('.flag-color-btn').forEach(b => b.classList.toggle('active', b === btn));
+    // Update active ring only within the flag picker
+    document.querySelectorAll('#flag-color-picker .flag-color-btn').forEach(b => b.classList.toggle('active', b === btn));
     // Update the flag button icon in the mode bar to reflect chosen colour
     document.getElementById('flag-btn-polygon').setAttribute('fill', flagColors[flagColor]);
     flagPickerEl.classList.remove('visible');
@@ -642,12 +642,25 @@ document.querySelectorAll('.flag-color-btn').forEach(btn => {
     wrap.style.cursor = 'crosshair';
     showToast('🚩 Bandeira ' + flagColorNames[flagColor] + ' selecionada');
   });
-  // Same handler for touch so it works on mobile without delay
-  btn.addEventListener('touchend', e => {
+  btn.addEventListener('touchend', e => { e.stopPropagation(); e.preventDefault(); btn.click(); }, { passive: false });
+});
+
+// ─── Outro colour picker ──────────────────────────────
+document.querySelectorAll('#outro-color-picker .flag-color-btn').forEach(btn => {
+  btn.addEventListener('click', e => {
     e.stopPropagation();
-    e.preventDefault();
-    btn.click();
-  }, { passive: false });
+    outroColor = btn.dataset.outroColor;
+    // Update active ring only within the outro picker
+    document.querySelectorAll('#outro-color-picker .flag-color-btn').forEach(b => b.classList.toggle('active', b === btn));
+    // Update the Outro button icon in the mode bar
+    document.getElementById('outro-btn-path').setAttribute('fill', outroColors[outroColor]);
+    outroPickerEl.classList.remove('visible');
+    mode = 'cover';
+    document.querySelectorAll('.mbtn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'cover'));
+    wrap.style.cursor = 'crosshair';
+    showToast('📍 Outro ' + outroColorNames[outroColor] + ' selecionado');
+  });
+  btn.addEventListener('touchend', e => { e.stopPropagation(); e.preventDefault(); btn.click(); }, { passive: false });
 });
 
 // ─── Zoom buttons ────────────────────────────────────

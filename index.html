@@ -378,7 +378,7 @@ html, body {
       <div class="zbtn" id="zbtn-save" title="Descarregar ficheiro atualizado para partilhar" style="width:auto;padding:0 10px;font-size:11px;font-weight:700;color:#4ade80;border-color:#4ade80;gap:4px;">
         Guardar
       </div>
-      <div class="zbtn" id="zbtn-share" title="Partilhar via WhatsApp, Email, etc." style="width:auto;padding:0 10px;font-size:11px;font-weight:700;color:#38bdf8;border-color:#38bdf8;display:none;">
+      <div class="zbtn" id="zbtn-share" title="Copiar link com os marcadores" style="width:auto;padding:0 10px;font-size:11px;font-weight:700;color:#38bdf8;border-color:#38bdf8;">
         Partilhar 📤
       </div>
       <div class="zbtn" id="btn-undo" title="Desfazer último" style="font-size:14px">↩</div>
@@ -680,20 +680,40 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   showToast('Todos os marcadores limpos');
 });
 
-// ─── Show Share button only on devices that support Web Share API with files ──
-// navigator.canShare is available on Android Chrome 75+ and iOS Safari 15+.
-// We test once on load so the button only appears where it will actually work.
-(function() {
-  const shareBtn = document.getElementById('zbtn-share');
-  try {
-    const testFile = new File(['test'], 'test.html', { type: 'text/html' });
-    if (navigator.canShare && navigator.canShare({ files: [testFile] })) {
-      shareBtn.style.display = '';
-    }
-  } catch(e) { /* not supported — button stays hidden */ }
-})();
+// ─── Share button — encodes markers into a URL hash ────────────────────────
+// Works on every device: Web Share API on mobile, clipboard on desktop,
+// prompt() as last resort. No file attachment, no server needed.
+document.getElementById('zbtn-share').addEventListener('click', async () => {
+  if (!markers.length) { showToast('Nenhum marcador para partilhar'); return; }
 
-// ─── Build the baked HTML blob (shared logic for Save and Share) ───────────
+  const encoded  = encodeMarkers(markers);
+  const shareUrl = window.location.href.split('#')[0] + '#' + encoded;
+  const count    = markers.length;
+  const txt      = count + ' marcador' + (count !== 1 ? 'es' : '') + ' incluído' + (count !== 1 ? 's' : '') + '.';
+
+  // Web Share API — native sheet on Android / iOS
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: 'Mapa de Airsoft — Campo de Taboadelo', text: txt, url: shareUrl });
+      showToast('Partilhado! 📤');
+      return;
+    } catch(e) {
+      if (e.name === 'AbortError') return;
+    }
+  }
+
+  // Clipboard API — desktop browsers and Android Chrome
+  try {
+    await navigator.clipboard.writeText(shareUrl);
+    showToast('🔗 Link copiado!');
+    return;
+  } catch(e) { /* fall through */ }
+
+  // Last resort
+  prompt('Copia este link:', shareUrl);
+});
+
+// ─── Build the baked HTML blob (Save button only) ────────────────────────
 function buildFileBlob(action) {
   const markerData = markers.map(m => ({ type: m.type, x: m.x, y: m.y, label: m.label, color: m.color }));
   if (!markerData.length) { showToast('Nenhum marcador para ' + (action || 'guardar')); return null; }
@@ -708,7 +728,7 @@ function buildFileBlob(action) {
 
   const metaSplit = 'id="saved-markers-data"';
   const metaStart = src.indexOf('<meta ' + metaSplit);
-  if (metaStart === -1) { showToast('Partilha falhou — etiqueta meta em falta'); return null; }
+  if (metaStart === -1) { showToast('Guardar falhou — etiqueta meta em falta'); return null; }
   const metaEnd = src.indexOf('>', metaStart) + 1;
   src = src.slice(0, metaStart) +
     '<meta ' + metaSplit + ' name="saved-markers" content="' + jsonStr + '">' +
@@ -719,37 +739,23 @@ function buildFileBlob(action) {
   return { blob: new Blob([src], { type: 'text/html' }), count: markerData.length };
 }
 
-document.getElementById('zbtn-share').addEventListener('click', async () => {
-  const result = buildFileBlob('share');
-  if (!result) return;
-
-  const file = new File([result.blob], 'airsoft_map.html', { type: 'text/html' });
-
+// ─── URL-hash marker encoding ─────────────────────────────────────────────
+function encodeMarkers(arr) {
+  const compact = arr.map(m => ({ t:m.type, x:Math.round(m.x), y:Math.round(m.y), l:m.label, c:m.color }));
+  const bytes = new TextEncoder().encode(JSON.stringify(compact));
+  let bin = '';
+  bytes.forEach(b => bin += String.fromCharCode(b));
+  return btoa(bin);
+}
+function decodeMarkersFromHash(b64) {
   try {
-    await navigator.share({
-      title: 'Mapa de Airsoft — Campo de Taboadelo',
-      text: result.count + ' marcador' + (result.count !== 1 ? 'es' : '') + ' incluído' + (result.count !== 1 ? 's' : '') + '.',
-      files: [file]
-    });
-    showToast('Partilhado!');
-  } catch(e) {
-    // User cancelled or share failed — don't show an error for cancellations
-    if (e.name !== 'AbortError') showToast('Partilha falhou — tente Guardar');
-  }
-});
-
-document.getElementById('zbtn-save').addEventListener('click', () => {
-  const result = buildFileBlob('save');
-  if (!result) return;
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(result.blob);
-  a.download = 'airsoft_map.html';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(a.href);
-  showToast('Guardado — ' + result.count + ' marcador' + (result.count !== 1 ? 'es' : ''));
-});
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const arr = JSON.parse(new TextDecoder().decode(bytes));
+    return arr.map(m => ({ type:m.t, x:m.x, y:m.y, label:m.l, color:m.c }));
+  } catch(e) { return null; }
+}
 
 // ─── Place marker ────────────────────────────────────
 function placeMarker(mx, my, type, label, color) {
@@ -766,16 +772,11 @@ function placeMarker(mx, my, type, label, color) {
   el.style.top  = my + 'px';
   el.title = label;
 
-  // Tap on any existing marker → show delete popover (works on both mobile and desktop)
-  // On mobile, touchend fires before click; we open the popover on touchend and set
-  // a flag so the subsequent click event (which some browsers still fire) is ignored.
   let popoverOpenedByTouch = false;
 
-  // BUG FIX 1 (continued): non-passive touchstart lets us call preventDefault(),
-  // which suppresses the browser's long-press text-selection / callout on the marker.
   el.addEventListener('touchstart', e => {
     e.stopPropagation();
-    e.preventDefault(); // blocks long-press selection – requires non-passive listener
+    e.preventDefault();
   }, { passive: false });
 
   el.addEventListener('touchend', e => {
@@ -783,13 +784,12 @@ function placeMarker(mx, my, type, label, color) {
     e.preventDefault();
     popoverOpenedByTouch = true;
     showPopover(el, mx, my, label);
-    // Reset flag after the click event has had a chance to fire (or not)
     setTimeout(() => { popoverOpenedByTouch = false; }, 300);
   }, { passive: false });
 
   el.addEventListener('click', e => {
     e.stopPropagation();
-    if (popoverOpenedByTouch) return; // already handled by touchend
+    if (popoverOpenedByTouch) return;
     showPopover(el, mx, my, label);
   });
 
@@ -797,34 +797,25 @@ function placeMarker(mx, my, type, label, color) {
   markers.push({ el, type, x: mx, y: my, label, color });
 }
 
-
 const popoverEl     = document.getElementById('marker-popover');
 const popoverLabel  = document.getElementById('popover-label');
 const popoverDelete = document.getElementById('popover-delete');
 const popoverCancel = document.getElementById('popover-cancel');
-let   popoverTarget = null; // the marker el currently being popped over
+let   popoverTarget = null;
 
 function showPopover(markerEl, mx, my, label) {
   popoverTarget = markerEl;
   popoverLabel.textContent = label;
-
-  // Position popover above the marker in screen space
   const wrapRect = wrap.getBoundingClientRect();
-  // marker is at (mx, my) in image coords; convert to screen coords
   const screenX = mx * scale + ox;
   const screenY = my * scale + oy;
-
   popoverEl.classList.add('visible');
-  // Temporarily show to measure width
   const pw = popoverEl.offsetWidth || 160;
   const ph = popoverEl.offsetHeight || 90;
-
   let left = screenX - pw / 2;
   let top  = screenY - ph - 12;
-  // Clamp to wrap bounds
   left = Math.max(6, Math.min(left, wrapRect.width - pw - 6));
   top  = Math.max(6, top < 6 ? screenY + 28 : top);
-
   popoverEl.style.left = left + 'px';
   popoverEl.style.top  = top  + 'px';
 }
@@ -834,12 +825,6 @@ function hidePopover() {
   popoverTarget = null;
 }
 
-// BUG FIX 4: Popover touch events were bubbling up to wrap's touchstart / touchend
-// handlers.  When the user tapped "Cancel" or "Remove marker":
-//   1. touchstart bubbled → wrap added the touch to activeTouches and set dragStart
-//   2. touchend bubbled  → wrap's handler called placeTap(), stamping a NEW marker
-//      at the exact spot where the popover button was.
-// Blocking propagation on the popover element itself is the cleanest fix.
 popoverEl.addEventListener('touchstart', e => { e.stopPropagation(); }, { passive: false });
 popoverEl.addEventListener('touchend',   e => { e.stopPropagation(); }, { passive: false });
 
@@ -855,20 +840,19 @@ popoverDelete.addEventListener('click', () => {
 
 popoverCancel.addEventListener('click', hidePopover);
 
-// Tap anywhere on the map closes the popover — flag set to suppress placeTap
 let popoverJustDismissed = false;
 wrap.addEventListener('pointerdown', e => {
-  flagPickerEl.classList.remove('visible');  // close colour pickers on any map tap
+  flagPickerEl.classList.remove('visible');   // close colour pickers on any map tap
   outroPickerEl.classList.remove('visible');
   if (popoverEl.classList.contains('visible') &&
       !popoverEl.contains(e.target)) {
     hidePopover();
     popoverJustDismissed = true;
-    // In view mode no placeTap will ever consume the flag, reset next tick
     if (mode === 'view') setTimeout(() => { popoverJustDismissed = false; }, 0);
   }
 }, true);
 
+// ─── Save / Load ─────────────────────────────────────
 function saveMarkers() {
   const data = markers.map(m => ({ type: m.type, x: m.x, y: m.y, label: m.label, color: m.color }));
   try { localStorage.setItem('airsoft_markers', JSON.stringify(data)); } catch(e) {}
@@ -876,24 +860,31 @@ function saveMarkers() {
 
 function loadMarkers() {
   try {
-    // Clear any markers already on the DOM (guards against double-init)
     document.querySelectorAll('.marker').forEach(el => el.remove());
     markers.length = 0;
 
     let data = null;
-    // 1. Prefer the <meta> tag — it reflects what was explicitly saved into this file.
-    //    This ensures a shared file always loads its own markers on any device.
-    const metaEl = document.getElementById('saved-markers-data');
-    const metaContent = metaEl && metaEl.getAttribute('content');
-    if (metaContent) {
-      const parsed = JSON.parse(metaContent);
-      if (parsed && parsed.length) {
-        data = parsed;
-        // Seed localStorage so subsequent edits on this device persist
-        try { localStorage.setItem('airsoft_markers', JSON.stringify(data)); } catch(e) {}
+
+    // 1. URL hash — highest priority (someone opened a shared link)
+    const hash = window.location.hash.slice(1);
+    if (hash) {
+      data = decodeMarkersFromHash(hash);
+    }
+
+    // 2. <meta> tag — explicitly saved into this file
+    if (!data) {
+      const metaEl = document.getElementById('saved-markers-data');
+      const metaContent = metaEl && metaEl.getAttribute('content');
+      if (metaContent) {
+        const parsed = JSON.parse(metaContent);
+        if (parsed && parsed.length) {
+          data = parsed;
+          try { localStorage.setItem('airsoft_markers', JSON.stringify(data)); } catch(e) {}
+        }
       }
     }
-    // 2. Fall back to localStorage (edits made on this device after last save)
+
+    // 3. localStorage — edits made on this device
     if (!data) {
       const raw = localStorage.getItem('airsoft_markers');
       if (raw) {
@@ -901,6 +892,7 @@ function loadMarkers() {
         if (parsed && parsed.length) data = parsed;
       }
     }
+
     if (data) {
       data.forEach(m => placeMarker(m.x, m.y, m.type, m.label, m.color));
     }
@@ -912,31 +904,7 @@ function getMapCoords(cx, cy) {
   return { x: (cx - r.left - ox) / scale, y: (cy - r.top - oy) / scale };
 }
 
-// ─── Outro colour picker ─────────────────────────────
-document.querySelectorAll('#outro-color-picker .flag-color-btn').forEach(btn => {
-  btn.addEventListener('click', e => {
-    e.stopPropagation();
-    outroColor = btn.dataset.outroColor;
-    // Update active ring on picker buttons
-    document.querySelectorAll('#outro-color-picker .flag-color-btn').forEach(b => b.classList.toggle('active', b === btn));
-    // Update the Outro button pin colour in the mode bar
-    document.getElementById('outro-btn-path').setAttribute('fill', outroColors[outroColor]);
-    outroPickerEl.classList.remove('visible');
-    // Ensure cover mode is active after picking a colour
-    mode = 'cover';
-    document.querySelectorAll('.mbtn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'cover'));
-    wrap.style.cursor = 'crosshair';
-    showToast('📍 Outro ' + outroColorNames[outroColor] + ' selecionado');
-  });
-  btn.addEventListener('touchend', e => {
-    e.stopPropagation();
-    e.preventDefault();
-    btn.click();
-  }, { passive: false });
-});
-// Two extra pan gestures for laptop users:
-//   • Middle-mouse-button drag  (most natural on a laptop/mouse)
-//   • Space + left-drag         (standard in design / mapping tools)
+// ─── Laptop pan helpers ──────────────────────────────
 let spaceDown  = false;
 let middleDrag = false;
 
@@ -955,22 +923,15 @@ document.addEventListener('keyup', e => {
   }
 });
 
-// BUG FIX 3: Suppress ALL context menus on the map (long-press on touch, right-click
-// on desktop, middle-click).  The old guard only checked e.button === 1 (middle-click)
-// which left long-press context menus on mobile completely unblocked.
 wrap.addEventListener('contextmenu', e => { e.preventDefault(); });
 
-// ─── Pointer events ──────────────────────────────────
+// ─── Pointer events (mouse / stylus) ─────────────────
 wrap.addEventListener('pointerdown', e => {
-  if (e.pointerType === 'touch') return; // touch events handle this
+  if (e.pointerType === 'touch') return;
   if (e.target !== wrap && e.target !== img && e.target !== ml) return;
   if (pinching) return;
-
-  // Always record start position so pointerup can measure drag distance
   dragStart = { x: e.clientX, y: e.clientY };
   viewStart = { x: ox, y: oy };
-
-  // Pan when: View mode  OR  Space held  OR  middle-mouse button
   const isPan = (mode === 'view') || spaceDown || (e.button === 1);
   if (isPan) {
     dragging   = true;
@@ -981,7 +942,7 @@ wrap.addEventListener('pointerdown', e => {
 });
 
 wrap.addEventListener('pointermove', e => {
-  if (e.pointerType === 'touch') return; // touch events handle this
+  if (e.pointerType === 'touch') return;
   if (dragging) {
     ox = viewStart.x + (e.clientX - dragStart.x);
     oy = viewStart.y + (e.clientY - dragStart.y);
@@ -990,24 +951,22 @@ wrap.addEventListener('pointermove', e => {
 });
 
 wrap.addEventListener('pointerup', e => {
-  if (e.pointerType === 'touch') return; // touch events handle this
+  if (e.pointerType === 'touch') return;
   if (e.target !== wrap && e.target !== img && e.target !== ml) return;
   const dx   = (dragStart.x !== undefined) ? e.clientX - dragStart.x : 0;
   const dy   = (dragStart.y !== undefined) ? e.clientY - dragStart.y : 0;
   const dist = Math.hypot(dx, dy);
   const wasPanning = middleDrag || (dragging && spaceDown);
-
   if (dragging) {
     dragging   = false;
     middleDrag = false;
     wrap.style.cursor = spaceDown ? 'grab' : (mode === 'view' ? 'grab' : 'crosshair');
   }
-
-  // Place a marker only on a genuine left-click tap (not a pan gesture, not a drag)
   if (mode !== 'view' && e.button === 0 && !wasPanning && dist < 8)
     placeTap(e.clientX, e.clientY);
 });
 
+// ─── Place on tap ────────────────────────────────────
 function placeTap(cx, cy) {
   if (popoverJustDismissed) { popoverJustDismissed = false; return; }
   const { x, y } = getMapCoords(cx, cy);
@@ -1023,42 +982,37 @@ function placeTap(cx, cy) {
   saveMarkers();
   const modePlacedPt = { spawn: 'colocado', flag: 'colocada', cover: 'colocado', oob: 'marcado' };
   showToast(
-    (mode === 'flag' ? '🚩' : mode === 'cover' ? '📍' : modeEmoji[mode]) + ' ' + label + ' ' + modePlacedPt[mode]
+    (mode === 'flag' ? '\uD83D\uDEA9' : mode === 'cover' ? '\uD83D\uDCCD' : modeEmoji[mode]) + ' ' + label + ' ' + modePlacedPt[mode]
   );
 }
 
-// ─── Pinch-to-zoom ───────────────────────────────────
+// ─── Touch events (mobile) ───────────────────────────
 let activeTouches = {};
 
 wrap.addEventListener('touchstart', e => {
   // Prevent the browser from classifying this as a native scroll/zoom gesture.
-  // Must be non-passive so preventDefault() is allowed.
   e.preventDefault();
   [...e.changedTouches].forEach(t => activeTouches[t.identifier] = {x: t.clientX, y: t.clientY});
   const ids = Object.keys(activeTouches);
   if (ids.length === 2) {
     pinching = true;
     dragging = false;
-    dragStart = {}; // reset single-touch pan
+    dragStart = {};
     const t0 = activeTouches[ids[0]], t1 = activeTouches[ids[1]];
     pinchDist = Math.hypot(t1.x - t0.x, t1.y - t0.y);
     pinchMid  = { x: (t0.x + t1.x) / 2, y: (t0.y + t1.y) / 2 };
   } else if (ids.length === 1) {
-    // Always record dragStart so tap detection and panning work in ALL modes
     const t = activeTouches[ids[0]];
     dragStart = { x: t.x, y: t.y };
     viewStart = { x: ox, y: oy };
   }
-}, { passive: false }); // non-passive: required for preventDefault()
+}, { passive: false });
 
 wrap.addEventListener('touchmove', e => {
   e.preventDefault();
-
-  // ── Prune ghost entries ───────────────────────────────────────────────────
-  // On Edge (and some Chrome versions) touchmove can fire for a remaining
-  // finger BEFORE touchend fires for the lifted finger.  If we don't clean up
-  // activeTouches here, ids.length stays 2 while the ghost entry has stale
-  // coordinates, causing a spurious zoom tick.
+  // Prune ghost entries: on Edge/Chrome, touchmove can fire for a remaining
+  // finger before touchend fires for the lifted one. Stale activeTouches
+  // entries would produce a spurious zoom tick.
   const liveSet = new Set([...e.touches].map(t => String(t.identifier)));
   Object.keys(activeTouches).forEach(id => { if (!liveSet.has(id)) delete activeTouches[id]; });
 
@@ -1070,12 +1024,8 @@ wrap.addEventListener('touchmove', e => {
     const d   = Math.hypot(t1.x - t0.x, t1.y - t0.y);
     const mid = { x: (t0.x + t1.x) / 2, y: (t0.y + t1.y) / 2 };
     const r   = wrap.getBoundingClientRect();
-
-    // pan with mid-point movement first
     ox += mid.x - pinchMid.x;
     oy += mid.y - pinchMid.y;
-
-    // zoom around mid-point with clamping
     const f = d / pinchDist;
     const cx = mid.x - r.left, cy = mid.y - r.top;
     const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * f));
@@ -1083,15 +1033,12 @@ wrap.addEventListener('touchmove', e => {
     ox = (ox - cx) * actualF + cx;
     oy = (oy - cy) * actualF + cy;
     scale = newScale;
-
     pinchDist = d;
     pinchMid  = mid;
     applyT();
   } else if (ids.length === 1 && !pinching) {
-    // Allow single-finger pan in ALL modes (not just 'view') so that after a
-    // pinch zoom the user can pan regardless of which tool is selected.
-    // Marker placement still works: touchend checks the travel distance and
-    // only places if the finger barely moved (< 8 px).
+    // Allow single-finger pan in ALL modes (not just view) — after a pinch
+    // zoom the user can pan regardless of which tool is active.
     const id = ids[0];
     const t  = activeTouches[id];
     if (dragStart.x !== undefined) {
@@ -1107,7 +1054,6 @@ wrap.addEventListener('touchend', e => {
   changed.forEach(t => delete activeTouches[t.identifier]);
   const remaining = Object.keys(activeTouches).length;
 
-  // Tap-to-place: single finger lifted, no pinch active or just-ended, non-view mode
   if (changed.length === 1 && !pinching && !pinchJustEnded && mode !== 'view') {
     const t  = changed[0];
     const ds = dragStart;
@@ -1116,16 +1062,12 @@ wrap.addEventListener('touchend', e => {
   }
 
   if (remaining < 2) {
-    // If a pinch was active, raise the flag so the final-finger lift can't
-    // accidentally place a marker (pinching is reset to false here, which would
-    // otherwise make the tap-to-place check pass on the very next touchend).
     if (pinching) pinchJustEnded = true;
     pinching  = false;
     dragStart = {};
     viewStart = { x: ox, y: oy };
     if (remaining === 1) {
-      // Use the live touch list for the freshest position of the remaining
-      // finger instead of activeTouches, which may be slightly stale.
+      // Use the live touch list for the freshest position of the remaining finger.
       const live = e.touches.length === 1 ? e.touches[0] : null;
       if (live) {
         activeTouches[live.identifier] = { x: live.clientX, y: live.clientY };
@@ -1135,11 +1077,10 @@ wrap.addEventListener('touchend', e => {
         dragStart = { x: activeTouches[id].x, y: activeTouches[id].y };
       }
     }
-    if (remaining === 0) pinchJustEnded = false; // all fingers up — safe to place again
+    if (remaining === 0) pinchJustEnded = false;
   }
 }, { passive: true });
 
-// ─── Touch cancel (OS interrupt: notification, call, etc.) ───────────────
 wrap.addEventListener('touchcancel', e => {
   [...e.changedTouches].forEach(t => delete activeTouches[t.identifier]);
   if (Object.keys(activeTouches).length < 2) {
